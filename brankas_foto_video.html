@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Brankas Foto & Video</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,sans-serif;background:#111;color:#fff;min-height:100vh}
+.hidden{display:none!important}
+.center{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{width:min(420px,100%);background:#1d1d1d;padding:28px;border-radius:20px;box-shadow:0 15px 50px #0008;text-align:center}
+h1{margin-top:0}
+input,button{width:100%;padding:13px;border-radius:10px;border:0;margin-top:10px;font-size:16px}
+input{background:#303030;color:#fff}
+button{background:#fff;color:#111;font-weight:bold;cursor:pointer}
+button.secondary{background:#333;color:#fff}
+button.danger{background:#b42318;color:#fff}
+.error{color:#ff6b6b;margin-top:10px;min-height:20px}
+header{padding:18px 20px;background:#1b1b1b;position:sticky;top:0;z-index:5;border-bottom:1px solid #333}
+.top{max-width:1100px;margin:auto;display:flex;gap:10px;align-items:center;justify-content:space-between}
+.top h2{margin:0}
+.top button{width:auto;margin:0;padding:10px 14px}
+main{max-width:1100px;margin:auto;padding:20px}
+.upload{background:#1d1d1d;padding:18px;border-radius:16px;margin-bottom:20px}
+.upload input[type=file]{padding:10px;background:#292929}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px}
+.item{background:#1d1d1d;border-radius:14px;overflow:hidden;position:relative}
+.item img,.item video{width:100%;height:180px;object-fit:cover;background:#000;display:block}
+.info{padding:10px;font-size:13px;word-break:break-word}
+.delete{margin:0 10px 10px;width:calc(100% - 20px);padding:9px;background:#8f1d1d;color:#fff}
+.empty{text-align:center;color:#aaa;padding:50px 10px}
+.badge{font-size:12px;color:#aaa}
+</style>
+</head>
+<body>
+
+<section id="login" class="center">
+  <div class="card">
+    <h1>🔐 Brankas Pribadi</h1>
+    <p>Masukkan kata sandi untuk membuka penyimpanan.</p>
+    <input id="password" type="password" placeholder="Kata sandi" autocomplete="current-password">
+    <button onclick="login()">Masuk</button>
+    <div id="error" class="error"></div>
+    <p class="badge">Penyimpanan berjalan di perangkat/browser ini.</p>
+  </div>
+</section>
+
+<section id="app" class="hidden">
+<header>
+  <div class="top">
+    <h2>📁 Foto & Video</h2>
+    <button onclick="logout()">Kunci</button>
+  </div>
+</header>
+<main>
+  <div class="upload">
+    <strong>Tambah foto atau video</strong>
+    <input id="files" type="file" accept="image/*,video/*" multiple>
+    <button onclick="saveFiles()">Simpan ke Brankas</button>
+    <div id="status" class="badge"></div>
+  </div>
+  <div id="gallery" class="grid"></div>
+  <div id="empty" class="empty hidden">Belum ada foto atau video.</div>
+</main>
+</section>
+
+<script>
+const PASSWORD = "1234";
+let db;
+
+function login(){
+  const p=document.getElementById("password").value;
+  if(p===PASSWORD){
+    sessionStorage.setItem("unlocked","1");
+    document.getElementById("login").classList.add("hidden");
+    document.getElementById("app").classList.remove("hidden");
+    initDB();
+  }else{
+    document.getElementById("error").textContent="Kata sandi salah.";
+  }
+}
+
+function logout(){
+  sessionStorage.removeItem("unlocked");
+  location.reload();
+}
+
+function initDB(){
+  const req=indexedDB.open("BrankasFotoVideo",1);
+  req.onupgradeneeded=e=>{
+    db=e.target.result;
+    if(!db.objectStoreNames.contains("media")){
+      db.createObjectStore("media",{keyPath:"id",autoIncrement:true});
+    }
+  };
+  req.onsuccess=e=>{db=e.target.result;loadGallery()};
+  req.onerror=()=>setStatus("Browser tidak mendukung penyimpanan ini.");
+}
+
+function setStatus(t){document.getElementById("status").textContent=t}
+
+async function saveFiles(){
+  const input=document.getElementById("files");
+  if(!input.files.length){setStatus("Pilih foto atau video terlebih dahulu.");return}
+  const tx=db.transaction("media","readwrite");
+  const store=tx.objectStore("media");
+  for(const file of input.files){
+    if(!file.type.startsWith("image/") && !file.type.startsWith("video/")) continue;
+    store.add({name:file.name,type:file.type,size:file.size,created:new Date().toISOString(),blob:file});
+  }
+  tx.oncomplete=()=>{
+    input.value="";
+    setStatus("Berhasil disimpan.");
+    loadGallery();
+  };
+}
+
+function loadGallery(){
+  const gallery=document.getElementById("gallery");
+  const empty=document.getElementById("empty");
+  gallery.innerHTML="";
+  const tx=db.transaction("media","readonly");
+  const req=tx.objectStore("media").getAll();
+  req.onsuccess=()=>{
+    const rows=req.result.reverse();
+    empty.classList.toggle("hidden",rows.length!==0);
+    rows.forEach(row=>{
+      const url=URL.createObjectURL(row.blob);
+      const box=document.createElement("div");
+      box.className="item";
+      const media=document.createElement(row.type.startsWith("image/")?"img":"video");
+      media.src=url;
+      if(media.tagName==="VIDEO"){media.controls=true;media.playsInline=true}
+      const info=document.createElement("div");
+      info.className="info";
+      info.textContent=row.name;
+      const del=document.createElement("button");
+      del.className="delete";
+      del.textContent="Hapus";
+      del.onclick=()=>deleteItem(row.id);
+      box.append(media,info,del);
+      gallery.appendChild(box);
+    });
+  };
+}
+
+function deleteItem(id){
+  if(!confirm("Hapus file ini?")) return;
+  const tx=db.transaction("media","readwrite");
+  tx.objectStore("media").delete(id);
+  tx.oncomplete=loadGallery;
+}
+
+document.getElementById("password").addEventListener("keydown",e=>{
+  if(e.key==="Enter") login();
+});
+
+if(sessionStorage.getItem("unlocked")==="1"){
+  document.getElementById("login").classList.add("hidden");
+  document.getElementById("app").classList.remove("hidden");
+  initDB();
+}
+</script>
+</body>
+</html>
